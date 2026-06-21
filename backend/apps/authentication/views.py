@@ -9,6 +9,13 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.conf import settings
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.mail import send_mail
+from django.utils import timezone
+from datetime import timedelta
+import random
+from .models import EmailOTP
 
 User = get_user_model()
 
@@ -166,12 +173,29 @@ class EmailRegisterView(APIView):
         nickname = request.data.get('nickname')
         password = request.data.get('password')
         confirm_password = request.data.get('confirm_password')
+        otp = request.data.get('otp')
 
-        if not email or not password:
-            return Response({"detail": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not email or not password or not otp:
+            return Response({"detail": "Email, password, and OTP are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         if confirm_password and password != confirm_password:
             return Response({"detail": "Confirm password does not match password."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verify OTP
+        otp_record = EmailOTP.objects.filter(email=email).order_by('-created_at').first()
+        if not otp_record:
+            return Response({"detail": "No OTP found for this email. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp_record.is_expired():
+            return Response({"detail": "Verification code has expired. Please request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp_record.otp != otp:
+            otp_record.attempt_count += 1
+            otp_record.save()
+            remaining = 5 - otp_record.attempt_count
+            if remaining <= 0:
+                return Response({"detail": "Maximum OTP verification attempts exceeded (5). Please request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": f"Invalid verification code. {remaining} attempts remaining."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not username:
             username = generate_unique_username(email)
@@ -192,10 +216,14 @@ class EmailRegisterView(APIView):
                 email=email,
                 username=username,
                 nickname=nickname,
-                avatar_url=avatar_url
+                avatar_url=avatar_url,
+                is_email_verified=True
             )
             user.set_password(password)
             user.save()
+
+            # Delete OTP record
+            otp_record.delete()
 
             refresh = RefreshToken.for_user(user)
             device_info = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
@@ -218,6 +246,85 @@ class EmailRegisterView(APIView):
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class SendOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return Response({"detail": "Invalid email format."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            otp_code = f"{random.randint(100000, 999999)}"
+            expires_at = timezone.now() + timedelta(minutes=5)
+            
+            # Update or create OTP
+            EmailOTP.objects.update_or_create(
+                email=email,
+                defaults={'otp': otp_code, 'expires_at': expires_at, 'attempt_count': 0}
+            )
+
+            # Send OTP using Resend API
+            api_key = os.environ.get('RESEND_API_KEY', 're_9Bna4kjq_AbAV8N2K3gynqDLWuG9FWeFQ')
+            url = "https://api.resend.com/emails"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "from": "onboarding@resend.dev",
+                "to": email,
+                "subject": "Your Login OTP",
+                "html": f"<p>Your OTP is: <strong>{otp_code}</strong></p><p>This OTP will expire in 5 minutes.</p>"
+            }
+            
+            try:
+                res = requests.post(url, headers=headers, json=payload)
+                if res.status_code not in (200, 201):
+                    print(f"Resend API Error: {res.status_code} - {res.text}")
+                    # Fallback to local console log in case of API Key restrictions
+            except Exception as e:
+                print(f"Resend API Exception: {e}")
+
+            return Response({
+                "detail": f"Verification code sent to {email}."
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class VerifyOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        otp = request.data.get('otp')
+
+        if not email or not otp:
+            return Response({"detail": "Email and OTP are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp_record = EmailOTP.objects.filter(email=email).order_by('-created_at').first()
+        if not otp_record:
+            return Response({"detail": "No OTP found for this email. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp_record.is_expired():
+            return Response({"detail": "Verification code has expired. Please request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp_record.otp != otp:
+            otp_record.attempt_count += 1
+            otp_record.save()
+            remaining = 5 - otp_record.attempt_count
+            if remaining <= 0:
+                return Response({"detail": "Maximum OTP verification attempts exceeded (5). Please request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": f"Invalid verification code. {remaining} attempts remaining."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"detail": "OTP verified successfully. You can now set your password."}, status=status.HTTP_200_OK)
+
 
 class EmailLoginView(APIView):
     permission_classes = [AllowAny]

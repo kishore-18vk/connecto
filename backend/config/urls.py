@@ -3,7 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
-from apps.authentication.views import EmailRegisterView, EmailLoginView, LogoutView
+from apps.authentication.views import EmailRegisterView, EmailLoginView, LogoutView, SendOTPView, VerifyOTPView
 from apps.accounts.views import ProfileView, ProfileUpdateView, UserSearchView, BlockUserView, UnblockUserView
 from apps.chats.views import (
     ChatListView, ChatDetailView, SendMessageView, DeleteChatView, UnreadCountView,
@@ -13,6 +13,10 @@ from apps.chats.views import (
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/', include('apps.authentication.urls')),
+    path('api/send-otp/', SendOTPView.as_view(), name='api-send-otp'),
+    path('api/verify-otp/', VerifyOTPView.as_view(), name='api-verify-otp'),
+    path('api/send-otp', SendOTPView.as_view(), name='api-send-otp-no-slash'),
+    path('api/verify-otp', VerifyOTPView.as_view(), name='api-verify-otp-no-slash'),
     path('api/profiles/', include('apps.accounts.urls')), # profiles are in accounts
     path('api/accounts/', include('apps.accounts.urls')), # allow both profiles and accounts mappings
     path('api/contacts/', include('apps.contacts.urls')),

@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from .views import GoogleLoginView, LogoutView, LogoutAllView, EmailRegisterView, EmailLoginView
+from .views import GoogleLoginView, LogoutView, LogoutAllView, EmailRegisterView, EmailLoginView, SendOTPView, VerifyOTPView
 
 urlpatterns = [
     path('google/', GoogleLoginView.as_view(), name='google-login'),
@@ -9,4 +9,6 @@ urlpatterns = [
     path('refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('logout/', LogoutView.as_view(), name='logout-device'),
     path('logout/all/', LogoutAllView.as_view(), name='logout-all'),
+    path('send-otp/', SendOTPView.as_view(), name='send-otp'),
+    path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
 ]

@@ -131,11 +131,20 @@ class AuthenticationTests(TestCase):
         self.assertNotEqual(user.password, old_password_hash)
 
     def test_email_password_registration(self):
-        """Test registering a new user with email and password"""
+        """Test registering a new user with email and password using OTP"""
+        # 1. Send OTP
+        send_res = self.client.post('/api/auth/send-otp/', {'email': 'newuser@example.com'}, format='json')
+        self.assertEqual(send_res.status_code, status.HTTP_200_OK)
+        from apps.authentication.models import EmailOTP
+        otp_code = EmailOTP.objects.get(email='newuser@example.com').otp
+        self.assertIsNotNone(otp_code)
+
+        # 2. Register with OTP
         data = {
             'email': 'newuser@example.com',
             'nickname': 'New User Nick',
-            'password': 'StrongPassword123!'
+            'password': 'StrongPassword123!',
+            'otp': otp_code
         }
         res = self.client.post('/api/auth/register/', data, format='json')
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
@@ -147,6 +156,22 @@ class AuthenticationTests(TestCase):
         # Verify the user has a hashed password in db
         user = User.objects.get(email='newuser@example.com')
         self.assertTrue(user.check_password('StrongPassword123!'))
+
+    def test_otp_verification_failure(self):
+        """Test that registration fails with invalid or expired OTP"""
+        # Send OTP
+        self.client.post('/api/auth/send-otp/', {'email': 'badotp@example.com'}, format='json')
+        
+        # Register with bad OTP
+        data = {
+            'email': 'badotp@example.com',
+            'nickname': 'Bad OTP Nick',
+            'password': 'StrongPassword123!',
+            'otp': '000000'
+        }
+        res = self.client.post('/api/auth/register/', data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid verification code', res.data['detail'])
 
     def test_email_password_login(self):
         """Test logging in with email and password credentials"""
